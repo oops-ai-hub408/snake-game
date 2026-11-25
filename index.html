@@ -39,7 +39,7 @@
     position: absolute; inset: 0;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 12px;
-    background: rgba(16,19,26,.82);
+    background: rgba(16,19,26,.86);
     border-radius: 10px;
     text-align: center;
     padding: 16px;
@@ -49,12 +49,28 @@
   .overlay .big { font-size: 18px; color: #e6e9ef; font-weight: 600; }
   button {
     border: 0; border-radius: 8px; cursor: pointer;
+    font-family: inherit;
+    transition: transform .08s ease, background .2s ease, color .2s ease;
+  }
+  button:active { transform: scale(.96); }
+  .primary {
     padding: 10px 22px; font-size: 15px; font-weight: 600;
     background: #34d399; color: #06281e;
-    transition: transform .08s ease, background .2s ease;
   }
-  button:hover { background: #6ee7b7; }
-  button:active { transform: scale(.96); }
+  .primary:hover { background: #6ee7b7; }
+  .levels { display: flex; gap: 8px; }
+  .levels button {
+    padding: 6px 14px; font-size: 13px;
+    background: #232935; color: #9aa4b2;
+    border: 1px solid #2f3746;
+  }
+  .levels button:hover { color: #e6e9ef; }
+  .levels button.on {
+    background: rgba(52,211,153,.16);
+    border-color: #34d399;
+    color: #6ee7b7;
+    font-weight: 600;
+  }
   .hint { font-size: 12px; color: #6b7280; }
 </style>
 </head>
@@ -68,8 +84,13 @@
     <canvas id="board" width="400" height="400"></canvas>
     <div class="overlay" id="overlay">
       <p class="big" id="overlayTitle">准备开始</p>
-      <p id="overlayText">方向键 / WASD 控制方向<br>空格键暂停，手机可滑动屏幕</p>
-      <button id="startBtn">开始游戏</button>
+      <p id="overlayText">方向键 / WASD 控制方向，空格暂停<br>手机可在棋盘上滑动</p>
+      <div class="levels" id="levels">
+        <button data-level="relax">悠闲</button>
+        <button data-level="normal">普通</button>
+        <button data-level="fast">挑战</button>
+      </div>
+      <button class="primary" id="startBtn">开始游戏</button>
     </div>
   </div>
   <div class="hint">吃到方块得分，撞墙或撞到自己就结束</div>
@@ -80,6 +101,13 @@
   const COLS = 20;
   const ROWS = 20;
 
+  // 难度：start 是初始每步毫秒数，min 是最快速度，accel 是每得 1 分缩短的毫秒数
+  const LEVELS = {
+    relax:  { start: 300, min: 190, accel: 0.5 },
+    normal: { start: 220, min: 130, accel: 1.0 },
+    fast:   { start: 160, min: 90,  accel: 1.4 }
+  };
+
   const canvas = document.getElementById('board');
   const ctx = canvas.getContext('2d');
   const scoreEl = document.getElementById('score');
@@ -88,16 +116,34 @@
   const overlayTitle = document.getElementById('overlayTitle');
   const overlayText = document.getElementById('overlayText');
   const startBtn = document.getElementById('startBtn');
+  const levelsEl = document.getElementById('levels');
 
-  let snake, dir, nextDir, food, score, best, timer, state;
+  let snake, dir, queue, food, score, best, timer, state;
+  let level = localStorage.getItem('snake-level') || 'relax';
+  if (!LEVELS[level]) level = 'relax';
 
   best = Number(localStorage.getItem('snake-best') || 0);
   bestEl.textContent = best;
 
+  function renderLevels() {
+    levelsEl.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('on', b.dataset.level === level);
+    });
+  }
+  renderLevels();
+
+  levelsEl.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    level = b.dataset.level;
+    localStorage.setItem('snake-level', level);
+    renderLevels();
+  });
+
   function reset() {
     snake = [{ x: 9, y: 10 }, { x: 8, y: 10 }, { x: 7, y: 10 }];
     dir = { x: 1, y: 0 };
-    nextDir = { x: 1, y: 0 };
+    queue = [];
     score = 0;
     scoreEl.textContent = '0';
     placeFood();
@@ -114,7 +160,8 @@
   }
 
   function speed() {
-    return Math.max(70, 140 - Math.floor(score / 3) * 8);
+    const cfg = LEVELS[level];
+    return Math.max(cfg.min, cfg.start - score * cfg.accel);
   }
 
   function loop() {
@@ -126,7 +173,7 @@
   }
 
   function step() {
-    dir = nextDir;
+    if (queue.length) dir = queue.shift();
     const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
 
     if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) return gameOver();
@@ -223,9 +270,13 @@
     }
   }
 
+  // 方向输入入队，快速连按两下也不会丢；禁止 180° 反向
   function turn(x, y) {
-    if (dir.x === -x && dir.y === -y) return;
-    nextDir = { x, y };
+    const last = queue.length ? queue[queue.length - 1] : dir;
+    if (last.x === -x && last.y === -y) return;
+    if (last.x === x && last.y === y) return;
+    if (queue.length >= 2) return;
+    queue.push({ x, y });
   }
 
   const KEYMAP = {
